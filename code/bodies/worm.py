@@ -1,5 +1,6 @@
 import numpy as np
 from bodies.body import *
+from bodies.sensors import *
 
 WORM_MAX_SPEED = 5.0
 WORM_MAX_ACCELERATION = 1.0
@@ -81,6 +82,8 @@ class Worm(Body):
         self.Head = self.Segment(position, direction, self.size, 0)
         self.Head.mass = WORM_DEFAULT_MASS*WORM_HEAD_MASS_RATIO
         self.segments = [self.Head]
+        self.Vibration_Sensor = Auditory(self.Head, WORM_DETECTION_RADIUS, CAMEL_DANGER_SPEED)
+        self._audio = self.speed
 
         x, y = position
         x += WORM_SEG_SIZE[0] * np.sin(direction)
@@ -114,6 +117,8 @@ class Worm(Body):
             self.Head.angle = np.pi - self.Head.angle
         if self.Head.y >= max_cond[1] or self.Head.y <= min_cond[1]:
             self.Head.angle = -self.Head.angle
+
+        self.Vibration_Sensor.update()
 
         # Update the position of each segment to follow the segment in front
         for i in range(1, len(self.segments)):
@@ -154,8 +159,9 @@ class Worm(Body):
         for segment in self.segments:
             segment.reset()
 
-    def detectCamel(self):
-        return 0.0, 0.0
+    def detectCamel(self, camels):
+        detections = np.array([np.array(self.Vibration_Sensor.Sense(camel)) for camel in camels])
+        return detections[np.argmin(detections[detections[0] == 0.0, 1])]
 
     def getState(self):
 

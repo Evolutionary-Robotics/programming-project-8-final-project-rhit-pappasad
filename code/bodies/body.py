@@ -18,7 +18,6 @@ class Body(ABC):
         self.radius = np.sqrt(self.size[0] ** 2 + self.size[1] ** 2)
         self._shape = None
         self.color = color
-        self.sensors = []
         self.network = None
 
     def reset(self):
@@ -39,7 +38,6 @@ class Body(ABC):
             self.angle -= np.pi*2
         while self.angle < 0:
             self.angle += np.pi*2
-
 
     @abstractmethod
     def handleUpdate(self, stepsize, *args):
