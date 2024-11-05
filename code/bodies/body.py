@@ -19,6 +19,7 @@ class Body(ABC):
         self._shape = None
         self.color = color
         self.sensors = []
+        self.network = None
 
     def reset(self):
         self.angular_velocity = 0.0
@@ -39,6 +40,7 @@ class Body(ABC):
         while self.angle < 0:
             self.angle += np.pi*2
 
+
     @abstractmethod
     def handleUpdate(self, stepsize, *args):
         pass
@@ -51,34 +53,26 @@ class Body(ABC):
     def manifest(self):
         pass
 
-    @property
-    def shape(self):
-        if not hasattr(self, '_shape'):
-            print(f"<<<ERROR>>>   bodies -> Body.py -> shape(): Body {self.__class__.__name__} has no shape")
-            sys.exit(2)
-
-        return self._shape
-
-    @shape.setter
-    def shape(self, shape: str):
-        if shape not in self._VALIDSHAPES:
-            print(f"<<<ERROR>>>   bodies -> Body.py -> shape setter(): {shape} is not a valid shape")
-            sys.exit(1)
-
-        shape = shape.lower()
-        if shape == 'circle':
-            shape = (self.color, (self.x, self.y), self.radius)
-        elif shape == 'x':
-            thickness = int(self.size[0] / 3)
-            s1 = (self.x - (self.size[0] / 2), self.y - (self.size[1] / 2))  # upper left
-            e1 = (self.x + (self.size[0] / 2), self.y + (self.size[1] / 2))  # lower right
-            s2 = (self.x - (self.size[0] / 2), self.y + (self.size[1] / 2))  # lower left
-            e2 = (self.x + (self.size[0] / 2), self.y - (self.size[1] / 2))  # upper right
-            shape = ((255, 0, 0), s1, e1, thickness), ((255, 0, 0), s2, e2, thickness)
-        elif shape == 'rectangle':
-            #draw square
-            pass
+    def getShape(self, shape: str):
+        if shape == 'rectangle':
+            top_left = (self.x - self.size[0] / 2, self.y - self.size[1] / 2)
+            width = self.size[0]
+            height = self.size[1]
+            return (('rect', self.color, (self.x, self.y), width, height, self.angle),)  # Include angle
         elif shape == 'triangle':
-            #draw tri
-            pass
-        self._shape = shape
+            # Define the points for the triangle with the flat side aligned with the angle
+            base_half_length = self.size[0] / 2
+            height = self.size[1] / 2
+
+            # Calculate triangle points with flat side perpendicular to the angle
+            point1 = (self.x + base_half_length * np.cos(self.angle + np.pi / 2),
+                      self.y + base_half_length * np.sin(self.angle + np.pi / 2))
+            point2 = (self.x - base_half_length * np.cos(self.angle + np.pi / 2),
+                      self.y - base_half_length * np.sin(self.angle + np.pi / 2))
+            point3 = (self.x + height * np.cos(self.angle),
+                      self.y + height * np.sin(self.angle))
+
+            # Add more shapes as needed
+            return (('polygon', self.color, (self.x, self.y), [point1, point2, point3], self.angle),)  # Include angle
+        # Add more shapes as needed
+
