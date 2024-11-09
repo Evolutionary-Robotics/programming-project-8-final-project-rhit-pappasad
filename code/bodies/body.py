@@ -72,5 +72,7 @@ class Body(ABC):
 
             # Add more shapes as needed
             return (('polygon', self.color, (self.x, self.y), [point1, point2, point3], self.angle),)  # Include angle
+        elif shape == 'circle':
+            return (('circle', self.color, (self.x, self.y), self.radius),)
         # Add more shapes as needed
 

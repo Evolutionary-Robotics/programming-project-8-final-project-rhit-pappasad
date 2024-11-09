@@ -3,7 +3,7 @@ from bodies.body import *
 from bodies.sensors import *
 
 WORM_MAX_SPEED = 5.0
-WORM_MAX_ACCELERATION = 1.0
+WORM_ACCELERATION_RANGE = (-1.0, 1.0)
 WORM_MAX_FORCE = 2000.0
 WORM_DETECTION_RADIUS = 250.0
 CAMEL_DANGER_SPEED = 1.0
@@ -41,7 +41,7 @@ class Worm(Body):
         def handleUpdate(self, stepsize, force, direction):
             # Existing linear acceleration update
             self.linear_acceleration = force * self.mass
-            self.linear_acceleration = np.clip(self.linear_acceleration, 0, WORM_MAX_ACCELERATION)
+            self.linear_acceleration = np.clip(self.linear_acceleration, *WORM_ACCELERATION_RANGE)
 
             angle_diff = (direction - self.angle) % (2*np.pi)
             if angle_diff > np.pi:
@@ -99,8 +99,13 @@ class Worm(Body):
         self.segments.append(self.Tail)
 
     def handleUpdate(self, stepsize, camels, min_cond, max_cond):
-        # Get the random action for the head
-        action = self.nextAction('random')
+        # Get the action for the head
+        if len(camels) > 0:
+            inputs = self.getState(camels)
+            action = self.nextAction(inputs)
+        else:
+            action = self.nextAction('random')
+
         if len(action) != self._NUM_ACT_OUTPUTS:
             print(
                 f"<<<ERROR>>> bodies -> worm.py -> handleUpdate(): Action (size {len(action)}) does not meet required dimensions ({self._NUM_ACT_OUTPUTS})")
@@ -108,7 +113,7 @@ class Worm(Body):
 
         # Update the head segment with the new force and direction
         force, direction = action
-        force = np.clip(force, 0, WORM_MAX_FORCE)
+        force = np.clip(force, -WORM_MAX_FORCE, WORM_MAX_FORCE)
         direction = direction % (2 * np.pi)
         self.Head.handleUpdate(stepsize, force, direction)
 
@@ -118,6 +123,7 @@ class Worm(Body):
         if self.Head.y >= max_cond[1] or self.Head.y <= min_cond[1]:
             self.Head.angle = -self.Head.angle
 
+        #Move the sensor position
         self.Vibration_Sensor.update()
 
         # Update the position of each segment to follow the segment in front
@@ -149,8 +155,8 @@ class Worm(Body):
 
     def nextAction(self, inputs):
         if inputs == 'random':
-            force = np.random.uniform(0, WORM_MAX_FORCE)
-            direction = np.random.uniform(0, np.pi)
+            force = np.random.uniform(-WORM_MAX_FORCE, WORM_MAX_FORCE)
+            direction = np.random.uniform(-np.pi, np.pi)
             return force, direction
         else:
             return self.network.forward(inputs)
@@ -161,11 +167,10 @@ class Worm(Body):
 
     def detectCamel(self, camels):
         detections = np.array([np.array(self.Vibration_Sensor.Sense(camel)) for camel in camels])
-        return detections[np.argmin(detections[detections[0] == 0.0, 1])]
+        return detections[np.argmin(detections[:, 1])]
 
-    def getState(self):
-
-        return np.array([*self.detectCamel(), *self.Head.getState()])
+    def getState(self, camels):
+        return np.array([*self.detectCamel(camels), *self.Head.getState()])
 
     def manifest(self):
         return [shp.manifest() for shp in self.segments]

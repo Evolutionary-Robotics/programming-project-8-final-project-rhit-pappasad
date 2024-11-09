@@ -1,6 +1,6 @@
 import os
 from environment import desert
-from bodies import worm
+from bodies import worm, camel
 import pygame
 import pandas as pd
 import pickle
@@ -55,8 +55,7 @@ class Simulation:
             for worm in self.worms:
                 self.drawWorm(screen, worm)
             for camel in self.camels:
-                #self.drawBody(camel)
-                pass
+                self.drawCamel(screen, camel)
 
 
             pygame.display.flip()
@@ -107,12 +106,55 @@ class Simulation:
                     ]
                     pygame.draw.polygon(screen, color, rotated_points)
 
+    def drawCamel(self, screen, body: camel.Camel):
+        for shape in body.manifest():
+            shape_type = shape[0]
+            color = shape[1]
+            position = shape[2]
+
+            if shape_type == 'rect':
+                width, height = shape[3], shape[4]
+                angle = shape[-1]  # Assuming the angle is passed as the last argument in the shape tuple
+
+                # Create a surface for the rectangle
+                rect_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+                pygame.draw.rect(rect_surface, color, (0, 0, width, height))
+
+                # Rotate the rectangle surface
+                rotated_surface = pygame.transform.rotate(rect_surface, -angle * 180 / np.pi)
+
+                # Adjust the position to the center after rotation
+                rotated_rect = rotated_surface.get_rect(center=position)
+                screen.blit(rotated_surface, rotated_rect.topleft)
+
+            elif shape_type == 'circle':
+                radius = shape[3]
+                pygame.draw.circle(screen, color, position, radius)
+
+            elif shape_type == 'polygon':
+                points = shape[3]
+                angle = shape[-1]
+
+                # Apply rotation to polygon points
+                rotated_points = [
+                    (
+                        position[0] + (point[0] - position[0]) * np.cos(angle) - (point[1] - position[1]) * np.sin(
+                            angle),
+                        position[1] + (point[0] - position[0]) * np.sin(angle) + (point[1] - position[1]) * np.cos(
+                            angle)
+                    )
+                    for point in points
+                ]
+                pygame.draw.polygon(screen, color, rotated_points)
+
 
 
 
 if __name__ == '__main__':
+    camel = camel.Camel((100, 100), 0.0)
     worm = worm.Worm((400, 400), 0.0)
     desert = desert.Desert((800, 800))
     desert.addWorm(worm)
+    desert.addCamel(camel)
     sim = Simulation(desert)
     sim.runViz('test', 1)

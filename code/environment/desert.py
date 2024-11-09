@@ -27,16 +27,13 @@ class Desert:
     def updateAgents(self, stepsize):
         cam_, worm_ = 0.0, 0.0
         for camel in self.camels:
-            cam_ = self.updateCamel(camel)
+            cam_ = camel.handleUpdate(stepsize, [], [], (self.min_x, self.min_y), (self.max_x, self.max_y))
         for worm in self.worms:
-            worm_ = worm.handleUpdate(stepsize, self.camels, (self.min_x, self.min_y), (self.max_x, self.max_y))
+            worm_ = worm.handleUpdate(stepsize, [], (self.min_x, self.min_y), (self.max_x, self.max_y))
         for pool in self.pools:
             pass #expel
 
         return cam_, worm_
-
-    def updateCamel(self, camel):
-        pass
 
 
 
