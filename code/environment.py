@@ -32,10 +32,12 @@ class Desert:
     def addPool(self, x, y, size=def_pool_size):
         self.pool = Pool(x, y, size)
 
-    def updateAgents(self, stepsize, action):
+    def updateAgents(self, stepsize, action, max_distance):
+        if max_distance <= 0:
+            max_distance = 1.0
         ret = 0.0
         if self.camel is not None:
-            ret = self.camel.handleUpdate(stepsize, action)
+            ret = self.camel.handleUpdate(stepsize, action, max_distance)
             if self.pool is not None:
                 self.pool.expelAgent(self.camel)
             if self.worm is not None:

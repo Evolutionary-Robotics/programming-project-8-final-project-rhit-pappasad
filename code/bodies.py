@@ -1,5 +1,12 @@
 import numpy as np
 from abc import ABC, abstractmethod
+import sensors as sen
+
+def angleNorm(angle):
+    return angle % (2*np.pi)
+
+def map_to_range(input_value, new_min, new_max):
+    return (input_value * (new_max - new_min)) + new_min
 
 class Body(ABC):
 
@@ -30,6 +37,7 @@ class Body(ABC):
 
         # Update angle with angular velocity
         self.angle += stepsize * self.angular_velocity
+        self.angle = angleNorm(self.angle)
 
         # Update speed based on acceleration
         self.speed += stepsize * self.acceleration
@@ -91,11 +99,13 @@ class Camel(Body):
     def_size = (5.0, 5.0)
     color = (3, 252, 65)
     success_color = (0, 255, 0)
-    ang_velocity_range = 0.2
-    state_returns = 6
+    ang_velocity_range = np.pi/8
+    state_returns = 5
     trainables = 2
     thirsty_threshold = max_hydration/2
     fov = np.pi/2
+    vision_range = 300.0
+    hearing_range = 50.0
     arrow_color = (100, 0, 100)
 
     def __init__(self, x, y, direction, desert, speed=0.5, size=None):
@@ -106,39 +116,47 @@ class Camel(Body):
         self.is_alive = True
         self.speed = speed
         self.reached_water = False
-        self.max_state = np.array([self.desert.max_x, self.desert.max_y, 2*np.pi, self.max_speed, 1.0, self.desert.max_distance])
+        self.eyes = sen.Visual(self, self.vision_range, self.angle, self.fov)
+        self.max_state = np.array([2*np.pi, self.max_speed, *self.eyes.Max])
+        #self.ears = sen.Auditory(self, self.hearing_range, )
 
-    def findPool(self) -> (float, float):
-        if self.desert.pool is None:
-            return 0.0, self.desert.max_distance
-
-        direction = self.getDirectionTo(self.desert.pool.x, self.desert.pool.y)
-        distance = self.getDistance(self.desert.pool.x, self.desert.pool.y)
-
-        if abs(direction) <= self.fov / 2:
-            return 1.0, distance
-        else:
-            return 0.0, self.desert.max_distance
+    # def findPool(self) -> (float, float):
+    #     if self.desert.pool is None:
+    #         return 0.0, self.desert.max_distance
+    #
+    #     direction = self.getDirectionTo(self.desert.pool.x, self.desert.pool.y)
+    #     distance = self.getDistance(self.desert.pool.x, self.desert.pool.y)
+    #
+    #     if abs(direction) <= self.fov / 2:
+    #         return 1.0, distance
+    #     else:
+    #         return 0.0, self.desert.max_distance
 
     def state(self):
-        return np.array([self.x, self.y, self.angle, self.speed, *self.findPool()]) / self.max_state
+        return np.array([self.angle, self.speed, *self.eyes.Sense(self.desert.pool)]) / self.max_state
 
-    def handleUpdate(self, stepsize, action):
+    def handleUpdate(self, stepsize, action, max_distance):
         if not self.is_alive:
             return 0.0
 
-        ret = self.step(stepsize, action)
+        action[0] = map_to_range(action[0], -self.max_accel, self.max_accel)
+        action[1] = map_to_range(action[1], -self.ang_velocity_range, self.ang_velocity_range)
+        ret = self.step(stepsize, action, max_distance)
         self.speed = np.clip(self.speed, 0, self.max_speed)
         return ret
+
+    def handleManual(self, stepsize, forward, direction):
+        return self.handleUpdate(stepsize, (forward * self.max_accel, direction * self.ang_velocity_range), self.desert.max_distance)
 
     def die(self):
         self.is_alive = False
 
-    def step(self, stepsize, action):
+    def step(self, stepsize, action, max_distance):
         #Extract relevant actions
         self.acceleration = np.clip(action[0], -self.max_accel, self.max_accel)
         self.angular_velocity = np.clip(action[1], -self.ang_velocity_range, self.ang_velocity_range)
         self.update(stepsize)
+        self.eyes.update()
 
         if self.isIntersecting(self.desert.pool):
             self.reached_water = True
@@ -146,12 +164,12 @@ class Camel(Body):
             return stepsize
         else:
             distance_to_pool = self.getDistance(self.desert.pool.x, self.desert.pool.y) - self.desert.pool.radius
-            reward = stepsize * (1 - distance_to_pool/self.desert.max_distance)
+            reward = stepsize * (1 - distance_to_pool/max_distance)
             return max(0.0, reward)
 
     def getArrow(self):
         thickness = 3
-        mag = 20
+        mag = 50
         arrow_head_size = 0.25 * mag
         arrow_head_angle = np.pi / 6
         start = (self.x + np.cos(self.angle)*(self.size[0] / 2), self.y + np.sin(self.angle)*(self.size[1] / 2))

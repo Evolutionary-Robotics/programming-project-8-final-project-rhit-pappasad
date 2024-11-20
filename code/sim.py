@@ -12,6 +12,9 @@ import matplotlib.pyplot as plt
 import sys
 import imageio
 
+
+
+
 class Simulation:
     history_labels = ['camel x', 'camel y', 'camel angle', 'camel speed', 'camel angular_velocity',
                       'camel acceleration', 'camel hydration',
@@ -51,8 +54,8 @@ class Simulation:
         Y = np.zeros(max_time)
         while t < max_time and camel.is_alive and not camel.reached_water:
             inp = camel.state()
-            out = self.net.forward(inp)*2 - 1 + np.random.normal(0, self.noisestd)
-            desert.updateAgents(stepsize, out)
+            out = self.net.forward(inp) + np.random.normal(0, self.noisestd)
+            desert.updateAgents(stepsize, out, 1)
             X[t] = camel.x
             Y[t] = camel.y
             t += stepsize
@@ -123,8 +126,8 @@ class Simulation:
         t = 0
         while t < max_time and temp_cam.is_alive and not temp_cam.reached_water:
             inp = temp_cam.state()
-            out = self.net.forward(inp)*2 - 1 + np.random.normal(0, self.noisestd)
-            desert.updateAgents(stepsize, out)
+            out = self.net.forward(inp) + np.random.normal(0, self.noisestd)
+            desert.updateAgents(stepsize, out, 1)
             t += stepsize
 
         return t
@@ -152,8 +155,8 @@ class Simulation:
         plt.show()
         return results
 
-    def runViz(self, name, stepsize, max_time=1000, fps=60, save=False):
-        if self.net is None:
+    def runViz(self, name, stepsize, max_time=1000, fps=60, save=False, debug=False):
+        if self.net is None and not debug:
             print("ERROR: Network not initialized, did you train?")
             return
 
@@ -166,26 +169,45 @@ class Simulation:
 
         self.desert.addPool(self.desert.size[0]//2, self.desert.size[1]//2)
         self.addCamel()
+        self.desert.pool.x = 600#np.random.randint(self.desert.pool.radius, self.desert.size[0] - self.desert.pool.radius)
+        self.desert.pool.y = 600#np.random.randint(self.desert.pool.radius, self.desert.size[1] - self.desert.pool.radius)
+        self.camel.x = 100
+        self.camel.y = 100
+        self.camel.angle = 0.0
 
+        cooldown = [10, 10, 10]
         #self.addWorm()
         self.running = True
         t = 0
         camel_path = []
         worm_path = []
         while self.running and t < max_time:
+            direction, forward = 0, 0
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
+                if event.type == pygame.KEYDOWN and debug:
+                    direction, forward = 0, 0
+                    if event.key == pygame.K_a:
+                        direction = -1.0
+                    elif event.key == pygame.K_w:
+                        forward = 1.0
+                    elif event.key == pygame.K_s:
+                        forward = -1.0
+                    elif event.key == pygame.K_d:
+                        direction = 1.0
 
             if isinstance(self.bg, tuple):
                 screen.fill(self.bg)
 
             #Update agents
             if self.camel is not None:
-                if self.camel.is_alive and not self.camel.reached_water:
+                if debug:
+                    self.camel.handleManual(stepsize, forward, direction)
+                elif self.camel.is_alive and not self.camel.reached_water:
                     inp = self.camel.state()
-                    out = self.net.forward(inp)*2 - 1 + np.random.normal(0, self.noisestd)
-                    self.desert.updateAgents(stepsize, out)
+                    out = self.net.forward(inp) + np.random.normal(0, self.noisestd)
+                    self.desert.updateAgents(stepsize, out, 1)
                     self.logHistory(stepsize)
                     camel_path.append((self.camel.x, self.camel.y))
                     if self.worm is not None:
@@ -204,6 +226,14 @@ class Simulation:
 
             if len(worm_path) > 1:
                 pygame.draw.lines(screen, (155, 0, 155), False, worm_path, 5)
+
+            if debug:
+                state = np.round(self.camel.state(), 2)
+                string = f"Angle: {state[0]} | Speed: {state[1]} | SeeWater?: {state[2]} | Distance: {state[3]} | Direction: {state[4]}"
+                new_text = font.render(string, True, (0, 0, 0))
+                tx = self.desert.size[0] // 2 - new_text.get_size()[0] // 2
+                ty = 0
+                screen.blit(new_text, (tx, ty))
 
             if self.worm is not None:
                 self.drawBody(screen, self.worm)
@@ -233,8 +263,8 @@ class Simulation:
 
         layers = [self.net_inputs] + hidden + [self.net_outputs]
         genesize = np.sum(np.multiply(layers[1:], layers[:-1]))
-        r_prob = 0.7
-        m_prob = 0.01
+        r_prob = 0.9
+        m_prob = 0.2
         tourney = popsize * 50
         self.ealg = Ealg(fitness_func, genesize, popsize, r_prob, m_prob, tourney)
         self.ealg.runAlg(True)
@@ -279,14 +309,14 @@ class Simulation:
         camel = bodies.Camel(0, 0, 0, desert)
         desert.addPool(0, 0)
 
-        def daLoop(net, desert, camel):
+        def daLoop(net, distance, desert, camel):
             fit = 0.0
             t = 0
             f = stepsize
             while t < max_time and f > 0.0:
                 inp = camel.state()
-                out = net.forward(inp) * 2 - 1 + np.random.normal(0.0, self.noisestd)
-                f = desert.updateAgents(stepsize, out)
+                out = net.forward(inp) + np.random.normal(0.0, self.noisestd)
+                f = desert.updateAgents(stepsize, out, distance)
                 fit += f
                 t += stepsize
 
@@ -303,6 +333,7 @@ class Simulation:
             deserts = [cpy(desert) for _ in range(total_trials)]
             for _ in range(total_trials): desert.addPool(0, 0)
             camels = [bodies.Camel(0, 0, 0, deserts[n]) for n in range(total_trials)]
+            distances = np.zeros(total_trials)
 
             i = 0
             for px in poolx_range:
@@ -318,10 +349,11 @@ class Simulation:
                                     camels[i].y = y
                                     camels[i].angle = a
                                     camels[i].speed = s
+                                    distances[i] = camels[i].getDistance(px, py) - deserts[i].pool.radius
                                     i+=1
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=total_trials) as executor:
-                futures = [executor.submit(daLoop, net, deserts[n], camels[n]) for n in range(total_trials)]
+                futures = [executor.submit(daLoop, net, distances[n], deserts[n], camels[n]) for n in range(total_trials)]
 
                 for i, future in enumerate(concurrent.futures.as_completed(futures)):
                     fits[i] = future.result()
@@ -346,13 +378,14 @@ class Simulation:
                                     camel.speed = s
                                     desert.pool.x = px
                                     desert.pool.y = py
+                                    max_distance = camel.getDistance(px, py) - desert.pool.radius
 
                                     f = stepsize
                                     t = 0
                                     while t < max_time and f > 0.0:
                                         inp = camel.state()
-                                        out = net.forward(inp)*2 - 1 + np.random.normal(0.0, self.noisestd)
-                                        f = desert.updateAgents(stepsize, out)
+                                        out = net.forward(inp) + np.random.normal(0.0, self.noisestd)
+                                        f = desert.updateAgents(stepsize, out, max_distance)
                                         fit += f
                                         t += stepsize
 
@@ -488,10 +521,10 @@ def test_mid():
     sim = Simulation(desert)
     stepsize = 1
     popsize = 10
-    max_time = 800
-    hidden = [4, 8, 4, 2]
-    sim.trainCamel(popsize, stepsize, max_time, hidden, name='Mid', fast=True)
-    sim.runViz(stepsize)
+    max_time = 1000
+    hidden = [8, 16, 8, 4]
+    sim.trainCamel(popsize, stepsize, max_time, hidden, name='Mid', trials_per=4, fast=True)
+    sim.runViz('h', stepsize)
     sim.plot(True)
 
 def test_simple():
@@ -500,11 +533,11 @@ def test_simple():
     sim = Simulation(desert)
     popsize = 10
     stepsize = 1
-    max_time = 300
+    max_time = 1000
     hidden = [5]
     print("Training the camel...")
     sim.trainCamel(popsize=popsize, stepsize=stepsize, max_time=max_time, hidden=hidden)
-    sim.runViz(stepsize)
+    sim.runViz('simple', stepsize)
     sim.plot(True)
 
 def test_plot_simple(name):
@@ -515,7 +548,7 @@ def test_plot_simple(name):
     stepsize = 1
     max_time = 1000
     sim.addCamel()
-    sim.runManyAndPlot(name, stepsize, max_time, 20, save=True)
+    sim.runManyAndPlot(name, stepsize, max_time, 20, save=True, random=True)
     #sim.plot(True)
 
 def test_many_simple(name):
@@ -540,7 +573,7 @@ def testFromSaved(name):
     sim = Simulation(desert)
     sim.load(path)
     stepsize = 1
-    sim.runViz(name, stepsize)
+    sim.runViz(name, stepsize, 1000, save=True)
     #sim.runManyAndPlot(name, stepsize, 400, 20, save=True, random=False)
 
 def showNet(name):
@@ -559,13 +592,25 @@ funcs = [
     test_moderate_big
 ]
 
+def debugCamel():
+    desert = env.Desert()
+    sim = Simulation(desert)
+    stepsize = 1
+    max_time = 100000
+    sim.runViz('debug', stepsize, max_time, debug=True)
+
 if __name__ == '__main__':
      #i = int(sys.argv[1])
      #funcs[i]()
      #funcs[0]()
-     # showNet('Train')
+     #showNet('Train')
      # showNet('Mid')
      # showNet('Thicc')
      # showNet('Big')
+     #test_mid()
+     #debugCamel()
+     #test_mid()
+     testFromSaved('Mid')
      #test_simple()
-     testFromSaved('Train')
+     #test_plot_simple('Mid')
+     #showNet('Mid')

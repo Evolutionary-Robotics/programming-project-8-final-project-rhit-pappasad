@@ -11,7 +11,7 @@ def sigmoid(x):
 def relu(x):
     return np.maximum(0, x)
 
-
+@jit(nopython=True)
 def tanh(x):
     return np.tanh(x)
 
