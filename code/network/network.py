@@ -1,107 +1,149 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import sys
-import pickle
-import os
+import numpy as np
+import matplotlib.pyplot as plt
+from numba import jit
+import networkx as nx
 
-ACTIVATION_FUNCTIONS = {
-    'relu': F.relu,
-    'sigmoid': F.sigmoid,
-    'tanh': F.tanh,
-    'softmax': F.softmax,
-    'identity': lambda x: x,
-    'step': lambda x: (x > 0).float(),
-    'leaky_relu': lambda x: F.leaky_relu(x, negative_slope=0.01)
-}
+@jit(nopython=True)
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
 
-class NeuralNetwork(nn.Module):
-    __device__ = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+@jit(nopython=True)
+def relu(x):
+    return np.maximum(0, x)
 
-    def __init__(self, num_inputs, hidden_map, num_outputs, hidden_activation, output_activations, w_range=1, b_range=1):
-        super(NeuralNetwork, self).__init__()
 
-        self.num_layers = len(hidden_map) + 2
-        self.num_hiddens = len(hidden_map)
-        self.num_outputs = num_outputs
+def tanh(x):
+    return np.tanh(x)
+
+
+def identity(x):
+    return x
+
+
+def step(x):
+    return np.heaviside(x)
+
+@jit(nopython=True)
+def fastDot(a, w, b):
+    return np.dot(a, w) + b
+
+class NeuralNetwork:
+    _act = {
+        'sigmoid': sigmoid,
+        'relu': relu,
+        'tanh': tanh,
+        'identity': identity,
+        'step': step
+    }
+    _act_deriv = {
+        'sigmoid': lambda x: sigmoid(x) * (1 - sigmoid(x)),
+        'relu': lambda x: np.heaviside(x, 1),
+        'tanh': lambda x: 1 - np.tanh(x)**2,
+        'identity': lambda x: 1,
+        'step': lambda x: np.inf if x == 0 else 0
+    }
+
+    def __init__(self, num_inputs, hidden_map, num_outputs, activation, oa, weight_range=1, bias_range=1):
+        self.num_hidden = len(hidden_map)
+        self.num_layers = self.num_hidden + 2
         self.num_inputs = num_inputs
+        self.num_outputs = num_outputs
+        self.hidden_map = hidden_map
 
-        try:
-            self._ha = hidden_activation.lower()
-            self.hidden_activation = ACTIVATION_FUNCTIONS[hidden_activation.lower()]
-            self._oa = output_activations
-            if isinstance(output_activations, str):
-                self.output_activations = [ACTIVATION_FUNCTIONS[output_activations.lower()]]*num_outputs
-            else:
-                self.output_activations = [ACTIVATION_FUNCTIONS[act.lower()] for act in output_activations]
-        except KeyError:
-            print(f"<<<ERROR>>>   network -> network.py -> NeuralNetwork.init(): {hidden_activation} or {output_activations} not valid")
-            sys.exit()
+        self.units_per_layer = np.zeros(self.num_layers).astype(int)
+        self.units_per_layer[0] = num_inputs
+        self.units_per_layer[1:-1] = hidden_map
+        self.units_per_layer[-1] = num_outputs
 
-        self.layers = nn.ModuleList()
-        self.layers.append(nn.Linear(self.num_inputs, hidden_map[0]))
-        for i in range(1, len(hidden_map)):
-            self.layers.append(nn.Linear(hidden_map[i-1], hidden_map[i]))
-        self.layers.append(nn.Linear(hidden_map[-1], self.num_outputs))
+        self.hidden_act = self._act[activation]
+        self.output_act = self._act[oa]
 
-        self.init_weights(w_range, b_range)
-
-    def init_weights(self, w_range, b_range):
-        for layer in self.layers:
-            nn.init.uniform_(layer.weight, -w_range, w_range)
-            nn.init.uniform_(layer.bias, -b_range, b_range)
-
-    def forward(self, inputs):
-        a = torch.tensor(inputs, dtype=torch.float16).to(self.__device__)
-        for i in range(len(self.layers) - 1):
-            a = self.hidden_activation(self.layers[i](a))
-        a = self.layers[-1](a)
-
-        outputs = [self.output_activations[i](a[i]).tolist() for i in range(self.num_outputs)]
-        #outputs = torch.stack([self.output_activations[i](a[:, i]) for i in range(self.num_outputs)], dim=1)
-        return outputs
+        self.weights = []
+        self.biases = []
+        self.weight_range = weight_range
+        self.bias_range = bias_range
 
     def setParams(self, params):
-        params = torch.tensor(params, dtype=torch.float16).to(self.__device__)
+        self.weights = []
+        self.biases = []
         start = 0
-        for layer in self.layers:
-            w_shape = layer.weight.shape
-            b_shape = layer.bias.shape
+        for layer in np.arange(self.num_layers-1):
+            end = start + self.units_per_layer[layer]*self.units_per_layer[layer+1]
+            self.weights.append((params[start:end]*self.weight_range).reshape(self.units_per_layer[layer], self.units_per_layer[layer+1]).astype(np.float32))
+            start = end
+        start = 0
+        for layer in np.arange(self.num_layers-1):
+            end = start + self.units_per_layer[layer+1]
+            self.biases.append((params[start:end]*self.bias_range).reshape(1, self.units_per_layer[layer+1]).astype(np.float32))
+            start = end
 
-            w_end = start + w_shape.numel()
-            b_end = w_end + b_shape.numel()
+    def forward(self, inputs):
+        a = np.array(inputs).astype(np.float32)
+        for layer in np.arange(self.num_layers - 2):
+            z = fastDot(a, self.weights[layer], self.biases[layer])
+            a = self.hidden_act(z)
+        z = fastDot(a, self.weights[-1], self.biases[-1])
+        a = self.output_act(z)
+        return a.flatten()
 
-            layer.weight.data = params[start:w_end].reshape(w_shape).to(layer.weight.device)
-            layer.bias.data = params[w_end:b_end].reshape(b_shape).to(layer.bias.device)
+    def visualize(self, title, save=False):
+        G = nx.DiGraph()
 
-            start = b_end
+        inputs = [f'X[{i-1}]' for i in range(self.num_inputs, 0, -1)]
+        G.add_nodes_from(inputs)
 
-    def save(self, name):
-        info = {
-            'num_inputs': self.num_inputs,
-            'num_outputs': self.num_outputs,
-            'hidden_map': [layer.out_features for layer in self.layers[:-1]],
-            'hidden_activation': self._ha,
-            'output_activations': self._oa,
-            'state_dict': self.state_dict()
-        }
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'saved', name+'.pkl')
-        with open(path, 'wb') as f:
-            pickle.dump(info, f)
-        print(f"Network {name} saved at {path}")
+        hidden = []
+        for l in range(self.num_hidden):
+            layer_nodes = [f'H{l+1}[{i-1}]' for i in range(self.hidden_map[l], 0, -1)]
+            hidden.append(layer_nodes)
+            G.add_nodes_from(layer_nodes)
 
-    @classmethod
-    def load(cls, name):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'saved', name+'.pkl')
-        with open(path, 'rb') as f:
-            info = pickle.load(f)
+        outputs = [f'Y[{i-1}]' for i in range(self.num_outputs, 0, -1)]
+        G.add_nodes_from(outputs)
 
-        state = info.pop('state_dict')
-        network = cls(**info)
-        network.load_state_dict(state)
-        network.to(cls.__device__)
-        print(f"Loaded {name} from {path}")
-        return network
+        for input_node in inputs:
+            for hidden_node in hidden[0]:
+                G.add_edge(input_node, hidden_node)
+
+        for i in range(self.num_hidden - 1):
+            for node in hidden[i]:
+                for next_node in hidden[i + 1]:
+                    G.add_edge(node, next_node)
+
+        for hidden_node in hidden[-1]:
+            for output_node in outputs:
+                G.add_edge(hidden_node, output_node)
+
+        # Define positions for nodes (centered vertical layout)
+        pos = {}
+        x_offset = 0
+        y_offset = 0
+
+        # Input layer (centered)
+        for i, node in enumerate(inputs):
+            pos[node] = (x_offset, i - self.num_inputs // 2)
+
+        # Hidden layers (centered)
+        for layer_index, layer in enumerate(hidden):
+            x_offset += 2
+            layer_size = len(layer)
+            #y_offset += 0.5 * (layer_size - self.units_per_layer[layer_index])
+
+            for i, node in enumerate(layer):
+                pos[node] = (x_offset, y_offset + i - layer_size // 2)
+
+        # Output layer (centered)
+        x_offset += 2
+        for i, node in enumerate(outputs):
+            pos[node] = (x_offset, i - self.num_outputs // 2)
+
+        #plt.figure(figsize=(10, 7))
+        nx.draw(G, pos, with_labels=True, node_size=1000, node_color="lightblue", font_size=10, font_weight="bold",
+                arrows=False)
+        #plt.title(title)
+        if save:
+            plt.savefig(f'{title}Network.png', dpi=300)
+        plt.show()
 
 
 
@@ -110,18 +152,7 @@ class NeuralNetwork(nn.Module):
 
 
 
-if __name__ == '__main__':
-    h_a = 'leaky_relu'
-    h_o = ['sigmoid', 'tanh']
-    hidden_map = [5, 3, 8, 4]
-    inputs = [1, 2, 3, 4]
 
-    net = NeuralNetwork.load('test')#NeuralNetwork(len(inputs), hidden_map, len(h_o), h_a, h_o)
-    #print(sum([p.numel() for p in net.parameters()]))
-    params = [0.1]*sum(p.numel() for p in net.parameters())
-    net.setParams(params)
-    output = net(inputs)
-    #net.save('test')
-    print(output)
+
 
 
